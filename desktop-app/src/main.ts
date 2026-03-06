@@ -257,12 +257,11 @@ async function ensureEngine(): Promise<void> {
   }
 
   const engineDir = engineDirEl.value.trim();
-  if (!engineDir) {
-    throw new Error("Engine folder is required to auto-start the backend.");
-  }
-
   setEngineStatus("starting...");
-  const result = await invoke<string>("start_engine", { engineDir, port: 8732 });
+  const result = await invoke<string>("start_engine", {
+    engineDir: engineDir || null,
+    port: 8732,
+  });
   log(result);
 
   const deadline = Date.now() + 15000;

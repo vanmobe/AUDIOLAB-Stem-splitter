@@ -27,18 +27,22 @@
           <span id="step1-state" class="step-badge">unknown</span>
         </summary>
         <div class="step-body">
-        <div class="row">
-          <label for="engine-dir">Engine folder</label>
-          <div class="field-group">
-            <input id="engine-dir" type="text" placeholder="Path to engine directory" />
-            <button id="pick-engine-dir" type="button">Browse</button>
-          </div>
-        </div>
+        <p class="status">Engine is started automatically. Most users do not need any engine configuration.</p>
         <div class="actions">
           <button id="check-engine" type="button"><span class="ico">◎</span>Check Health</button>
           <button id="start-engine" type="button"><span class="ico">▶</span>Start Engine</button>
           <button id="stop-engine" type="button"><span class="ico">■</span>Stop Engine</button>
         </div>
+        <details class="advanced-box">
+          <summary>Advanced engine settings</summary>
+          <div class="row">
+            <label for="engine-dir">Engine folder override (optional)</label>
+            <div class="field-group">
+              <input id="engine-dir" type="text" placeholder="Only use if auto-detect fails" />
+              <button id="pick-engine-dir" type="button">Browse</button>
+            </div>
+          </div>
+        </details>
         <p id="engine-status" class="status">Engine status: unknown</p>
         </div>
         </details>

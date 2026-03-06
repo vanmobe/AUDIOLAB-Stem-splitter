@@ -3,7 +3,8 @@
 Cross-platform desktop shell (macOS + Windows target) for the local splitter engine.
 
 ## Features
-- Select engine folder (`engine/`)
+- Auto-start engine (no folder selection needed for normal installer usage)
+- Optional advanced engine folder override
 - Start/stop the engine from the desktop app
 - Select input audio file and output folder
 - Choose stems (`2` or `4`) and preset (`fast`, `best`, `vocal_boost`)
@@ -12,6 +13,12 @@ Cross-platform desktop shell (macOS + Windows target) for the local splitter eng
 - Track job progress and status
 - Preview and combine stems in the Player tab
 - Run environment self-check diagnostics (Python/Demucs/ffmpeg/models)
+
+## Installer behavior
+- Engine files are bundled into the app package.
+- CI builds include a prebuilt engine `.venv` in the installer resources (per OS).
+- On first launch, SplitLAB copies bundled engine resources to app data and starts the engine.
+- Normal user install/start does not require internet access.
 
 ## Prerequisites
 - Node.js 20+

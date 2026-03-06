@@ -32,9 +32,41 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install desktop dependencies
         run: npm ci
         working-directory: desktop-app
+
+      - name: Prepare offline engine bundle (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python desktop-app/scripts/prepare_engine_bundle.py \
+            --engine-dir engine \
+            --bundle-dir desktop-app/resources/engine_bundle \
+            --bundle-id "${GITHUB_SHA}"
+          python -m venv desktop-app/resources/engine_bundle/.venv
+          desktop-app/resources/engine_bundle/.venv/bin/python -m pip install --upgrade pip
+          desktop-app/resources/engine_bundle/.venv/bin/python -m pip install -r desktop-app/resources/engine_bundle/requirements.txt
+          echo ok > desktop-app/resources/engine_bundle/.venv/.splitlab_runtime_ready
+
+      - name: Prepare offline engine bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python desktop-app/scripts/prepare_engine_bundle.py `
+            --engine-dir engine `
+            --bundle-dir desktop-app/resources/engine_bundle `
+            --bundle-id $env:GITHUB_SHA
+          python -m venv desktop-app/resources/engine_bundle/.venv
+          desktop-app/resources/engine_bundle/.venv/Scripts/python.exe -m pip install --upgrade pip
+          desktop-app/resources/engine_bundle/.venv/Scripts/python.exe -m pip install -r desktop-app/resources/engine_bundle/requirements.txt
+          Set-Content -Path desktop-app/resources/engine_bundle/.venv/.splitlab_runtime_ready -Value "ok"
 
       - name: Build Tauri app
         run: npm run tauri build

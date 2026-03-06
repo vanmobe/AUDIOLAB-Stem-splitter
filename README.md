@@ -61,6 +61,10 @@ This repo includes GitHub Actions workflows that produce downloadable desktop in
 - Workflow artifacts: downloadable from the run page under `Artifacts` (`splitlab-macos`, `splitlab-windows`)
 - Release assets: downloadable from `https://github.com/vanmobe/AUDIOLAB.sound.splitter/releases`
 - Release notes: auto-generated with direct installer links per tag
+- Installer includes offline engine payload:
+  - engine source files
+  - prebuilt `.venv` with dependencies per target platform
+- End-user install/start does not require internet access for engine setup
 
 Workflow files:
 - `.github/workflows/build-installers.yml`

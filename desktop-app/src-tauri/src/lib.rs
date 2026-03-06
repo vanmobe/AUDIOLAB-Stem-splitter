@@ -24,10 +24,123 @@ fn resolve_engine_dir(input: &Path) -> Option<PathBuf> {
     None
 }
 
+fn default_engine_search_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(v) = env::var("SPLITLAB_ENGINE_DIR") {
+        let p = PathBuf::from(v);
+        if !p.as_os_str().is_empty() {
+            roots.push(p);
+        }
+    }
+    if let Ok(cwd) = env::current_dir() {
+        roots.push(cwd.clone());
+        roots.push(cwd.join("engine"));
+    }
+    if let Ok(exe) = env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            roots.push(exe_dir.to_path_buf());
+            roots.push(exe_dir.join("engine"));
+            roots.push(exe_dir.join("../engine"));
+            roots.push(exe_dir.join("../resources/engine"));
+            roots.push(exe_dir.join("../Resources/engine"));
+            roots.push(exe_dir.join("../resources/engine_bundle"));
+            roots.push(exe_dir.join("../Resources/engine_bundle"));
+            roots.push(exe_dir.join("../../Resources/engine"));
+            roots.push(exe_dir.join("../../Resources/engine_bundle"));
+        }
+    }
+    roots
+}
+
 #[derive(Clone, Debug)]
 struct PythonLaunch {
     program: String,
     pre_args: Vec<String>,
+}
+
+fn splitlab_data_root() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(v) = env::var("LOCALAPPDATA") {
+            return PathBuf::from(v).join("SplitLAB");
+        }
+        if let Ok(v) = env::var("APPDATA") {
+            return PathBuf::from(v).join("SplitLAB");
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(v) = env::var("HOME") {
+            return PathBuf::from(v)
+                .join("Library")
+                .join("Application Support")
+                .join("SplitLAB");
+        }
+    }
+    env::temp_dir().join("SplitLAB")
+}
+
+fn should_materialize_engine(path: &Path) -> bool {
+    let s = path.to_string_lossy().to_lowercase();
+    s.contains("/resources/") || s.contains("\\resources\\")
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create folder {}: {e}", dst.display()))?;
+    let rd = fs::read_dir(src)
+        .map_err(|e| format!("Failed to read folder {}: {e}", src.display()))?;
+    for e in rd {
+        let e = e.map_err(|err| format!("Failed to read entry in {}: {err}", src.display()))?;
+        let p = e.path();
+        let name = e.file_name();
+        let name_s = name.to_string_lossy();
+        if name_s == "__pycache__" {
+            continue;
+        }
+        let out = dst.join(&name);
+        if p.is_dir() {
+            copy_dir_recursive(&p, &out)?;
+        } else {
+            fs::copy(&p, &out).map_err(|err| {
+                format!("Failed to copy {} to {}: {err}", p.display(), out.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn bundle_id(path: &Path) -> String {
+    fs::read_to_string(path.join(".splitlab_bundle_id"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "dev".to_string())
+}
+
+fn materialize_engine_dir(source: &Path) -> Result<PathBuf, String> {
+    let managed_root = splitlab_data_root().join("engine-managed");
+    let target = managed_root.join("engine");
+    fs::create_dir_all(&managed_root).map_err(|e| {
+        format!(
+            "Failed to create managed engine root {}: {e}",
+            managed_root.display()
+        )
+    })?;
+    let source_id = bundle_id(source);
+    let target_id_path = target.join(".splitlab_bundle_id");
+    let target_id = fs::read_to_string(&target_id_path)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let needs_sync = !target.join("server.py").exists() || target_id != source_id;
+    if needs_sync {
+        if target.exists() {
+            let _ = fs::remove_dir_all(&target);
+        }
+        copy_dir_recursive(source, &target)?;
+        fs::write(&target_id_path, source_id)
+            .map_err(|e| format!("Failed writing {}: {e}", target_id_path.display()))?;
+    }
+    Ok(target)
 }
 
 fn command_available(program: &str) -> bool {
@@ -120,6 +233,91 @@ fn resolve_python(engine_dir: &Path) -> Option<PythonLaunch> {
         .find(|candidate| command_available(&candidate.program))
 }
 
+fn venv_python_path(engine_dir: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        engine_dir.join(".venv").join("Scripts").join("python.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        engine_dir.join(".venv").join("bin").join("python")
+    }
+}
+
+fn run_logged_python_command(
+    engine_dir: &Path,
+    log_path: &Path,
+    launch: &PythonLaunch,
+    args: &[&str],
+) -> Result<(), String> {
+    let stdout_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| format!("Failed to open engine log file: {e}"))?;
+    let stderr_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| format!("Failed to open engine log file: {e}"))?;
+
+    let status = Command::new(&launch.program)
+        .current_dir(engine_dir)
+        .args(&launch.pre_args)
+        .args(args)
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
+        .status()
+        .map_err(|e| format!("Failed to run python command {:?}: {e}", launch))?;
+
+    if !status.success() {
+        return Err(format!(
+            "Python command failed with status {status}. Check log: {}",
+            log_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_engine_runtime(engine_dir: &Path, log_path: &Path) -> Result<PythonLaunch, String> {
+    let venv_python = venv_python_path(engine_dir);
+    let mut created_venv = false;
+    if !venv_python.exists() {
+        let bootstrap = resolve_python(engine_dir).ok_or_else(|| {
+            "Bundled Python runtime is missing and no system Python was found. Reinstall SplitLAB or use Advanced engine override.".to_string()
+        })?;
+        run_logged_python_command(engine_dir, log_path, &bootstrap, &["-m", "venv", ".venv"])?;
+        created_venv = true;
+    }
+
+    let venv_launch = PythonLaunch {
+        program: venv_python.to_string_lossy().to_string(),
+        pre_args: vec![],
+    };
+
+    let marker = engine_dir.join(".venv").join(".splitlab_runtime_ready");
+    if !marker.exists() {
+        if created_venv {
+            run_logged_python_command(
+                engine_dir,
+                log_path,
+                &venv_launch,
+                &["-m", "pip", "install", "--upgrade", "pip"],
+            )?;
+            run_logged_python_command(
+                engine_dir,
+                log_path,
+                &venv_launch,
+                &["-m", "pip", "install", "-r", "requirements.txt"],
+            )?;
+        }
+        fs::write(&marker, b"ok")
+            .map_err(|e| format!("Failed to write runtime marker {}: {e}", marker.display()))?;
+    }
+
+    Ok(venv_launch)
+}
+
 fn score_stem_dir(dir: &Path) -> Option<(usize, std::time::SystemTime)> {
     let candidates = [
         "vocals.wav",
@@ -151,36 +349,55 @@ fn score_stem_dir(dir: &Path) -> Option<(usize, std::time::SystemTime)> {
 }
 
 #[tauri::command]
-fn start_engine(engine_dir: String, port: Option<u16>) -> Result<String, String> {
+fn start_engine(engine_dir: Option<String>, port: Option<u16>) -> Result<String, String> {
     let port = port.unwrap_or(8732);
-    let requested_dir = PathBuf::from(engine_dir);
-    if !requested_dir.exists() || !requested_dir.is_dir() {
-        return Err("Engine folder does not exist or is not a directory".to_string());
+    let mut search_roots: Vec<PathBuf> = Vec::new();
+    if let Some(raw) = engine_dir {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let requested = PathBuf::from(trimmed);
+            if !requested.exists() || !requested.is_dir() {
+                return Err("Engine folder does not exist or is not a directory".to_string());
+            }
+            search_roots.push(requested);
+        }
     }
-    let dir = resolve_engine_dir(&requested_dir).ok_or_else(|| {
-        "Could not find engine/server.py in selected folder. Select the engine folder or repo root."
+    search_roots.extend(default_engine_search_roots());
+
+    let mut dir: Option<PathBuf> = None;
+    for root in &search_roots {
+        if let Some(found) = resolve_engine_dir(root) {
+            dir = Some(found);
+            break;
+        }
+    }
+    let mut dir = dir.ok_or_else(|| {
+        "Could not auto-detect engine/server.py. Install bundled engine or set Engine folder in Advanced settings."
             .to_string()
     })?;
-
-    let python = resolve_python(&dir).ok_or_else(|| {
-        "Python executable not found. Set up engine/.venv or install Python.".to_string()
-    })?;
+    if should_materialize_engine(&dir) {
+        dir = materialize_engine_dir(&dir)?;
+    }
 
     let slot = engine_slot();
-    let mut guard = slot
-        .lock()
-        .map_err(|_| "Failed to lock engine state".to_string())?;
+    {
+        let mut guard = slot
+            .lock()
+            .map_err(|_| "Failed to lock engine state".to_string())?;
 
-    if let Some(child) = guard.as_mut() {
-        match child.try_wait() {
-            Ok(None) => return Ok("Engine already running".to_string()),
-            Ok(Some(_)) | Err(_) => {
-                *guard = None;
+        if let Some(child) = guard.as_mut() {
+            match child.try_wait() {
+                Ok(None) => return Ok("Engine already running".to_string()),
+                Ok(Some(_)) | Err(_) => {
+                    *guard = None;
+                }
             }
         }
     }
 
     let log_path = env::temp_dir().join("audiolab-splitter-engine.log");
+    let python = ensure_engine_runtime(&dir, &log_path)?;
+
     let stdout_file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -193,7 +410,7 @@ fn start_engine(engine_dir: String, port: Option<u16>) -> Result<String, String>
         .map_err(|e| format!("Failed to open engine log file: {e}"))?;
 
     let mut cmd = Command::new(&python.program);
-    cmd.current_dir(dir)
+    cmd.current_dir(&dir)
         .args(&python.pre_args)
         .arg("-m")
         .arg("uvicorn")
@@ -217,10 +434,13 @@ fn start_engine(engine_dir: String, port: Option<u16>) -> Result<String, String>
         ));
     }
 
+    let mut guard = slot
+        .lock()
+        .map_err(|_| "Failed to lock engine state".to_string())?;
     *guard = Some(child);
     Ok(format!(
         "Engine process started from {} using {} (log: {})",
-        requested_dir.display(),
+        dir.display(),
         python.program,
         log_path.display()
     ))
