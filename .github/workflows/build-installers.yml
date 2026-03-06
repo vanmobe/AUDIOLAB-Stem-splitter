@@ -171,7 +171,7 @@ jobs:
       - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: splitlab-*
+          pattern: '*'
           path: release-assets
           merge-multiple: true
 
