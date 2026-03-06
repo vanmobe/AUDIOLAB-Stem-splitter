@@ -46,6 +46,7 @@ jobs:
           name: splitlab-${{ matrix.os }}
           path: |
             desktop-app/src-tauri/target/release/bundle/**
+          retention-days: 14
           if-no-files-found: error
 
       - name: Publish GitHub release assets (tag builds)

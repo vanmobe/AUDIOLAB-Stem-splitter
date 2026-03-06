@@ -2,7 +2,7 @@
 
 Local stem splitter with:
 - Python engine (`engine/`)
-- Cross-platform Tauri desktop app (`desktop-app/`) for macOS and Windows rollout
+- Cross-platform Tauri desktop app (`desktop-app/`) for macOS and Windows
 
 ## Functionality
 SplitLAB is a local AI stem separation tool that runs on your own machine.
@@ -15,12 +15,10 @@ SplitLAB is a local AI stem separation tool that runs on your own machine.
 
 ## What’s included
 - `engine/`: local FastAPI engine that runs Demucs backend (`demucs-mlx` on macOS or `demucs` on Windows/Linux), then post-processing (residual correction, peak limiting)
-- `macos-app/MoisesLocalMac/`: SwiftUI client that auto-starts the engine, runs jobs, shows progress, and keeps a local Library (SQLite)
 - `desktop-app/`: Tauri desktop client (TypeScript + Rust) for cross-platform use
 
 ## Dev prerequisites
 - macOS or Windows
-- Xcode (only for the SwiftUI app on macOS)
 - Python 3.10+ (for the local engine)
 - Node.js 20+
 - Rust (for Tauri desktop builds)
@@ -53,17 +51,27 @@ The Tauri app supports:
 - starting/stopping engine process
 - running split jobs and polling progress
 - opening output folder directly
+- loading and auditioning stems in sync
 
 ## Installers (macOS + Windows)
-This repo includes GitHub Actions workflows to build desktop installers.
+This repo includes GitHub Actions workflows that produce downloadable desktop installers.
 
 - Manual build: run the `Build Installers` workflow in GitHub Actions
 - Release build: push a version tag (for example `v0.1.0`) to build and publish assets to GitHub Releases
-- Artifacts include platform installers from `desktop-app/src-tauri/target/release/bundle`
+- Workflow artifacts: downloadable from the run page under `Artifacts` (`splitlab-macos-latest`, `splitlab-windows-latest`)
+- Release assets: downloadable from `https://github.com/vanmobe/AUDIOLAB.sound.splitter/releases`
 
 Workflow files:
 - `.github/workflows/build-installers.yml`
 - `.github/workflows/ci.yml`
+
+## App Screenshot
+Add screenshots in `docs/images/` and reference them here.
+
+Example:
+```md
+![SPLITLAB Main UI](docs/images/screenshot-main.png)
+```
 
 ## Open in VS Code
 Open this repo root in VS Code.
