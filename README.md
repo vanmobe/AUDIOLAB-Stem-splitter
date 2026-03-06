@@ -40,17 +40,6 @@ In this Phase 2 setup the app auto-starts the engine by running:
 `<venv-python> -m uvicorn server:app --host 127.0.0.1 --port 8732`
 from the `engine/` directory.
 
-## Native macOS GUI
-Use the SwiftUI app in `macos-app/MoisesLocalMac/` as the test client.
-
-The native app lets you:
-- choose an input audio file
-- choose an output destination folder
-- select `2` or `4` stems
-- choose quality preset (`fast`, `best`, `vocal_boost`)
-- start a split job and track progress
-- open the output folder when complete
-
 ## Cross-platform desktop GUI (Tauri)
 Use the Tauri app in `desktop-app/` for macOS + Windows.
 
