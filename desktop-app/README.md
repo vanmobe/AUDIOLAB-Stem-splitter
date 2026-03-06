@@ -58,3 +58,16 @@ Example reference:
 ```md
 ![SPLITLAB UI](../docs/images/screenshot-main.png)
 ```
+
+## macOS Notice: Unsigned Hobby Build
+This desktop app is a hobby project release. It is not code-signed and not notarized on macOS because there is no paid Apple Developer membership configured for this project.
+
+If macOS blocks startup with a damaged-app message, run this workaround:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/SplitLAB.app"
+```
+
+Then launch the app again (or right-click and choose `Open` once).
+
+This warning is expected for unsigned apps and does not indicate a broken stem separation engine.

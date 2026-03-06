@@ -78,5 +78,24 @@ Example:
 ![SPLITLAB Main UI](docs/images/screenshot-main.png)
 ```
 
+## macOS Notice: Unsigned Hobby Build
+This is a hobby project. The app is currently distributed without Apple code-signing and without notarization because we are not using a paid Apple Developer membership.
+
+If macOS shows a message like `"SplitLAB is damaged and can’t be opened"`, use this required workaround:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/SplitLAB.app"
+```
+
+Then open the app again (or right-click the app and choose `Open` once).
+
+This is a Gatekeeper trust warning for unsigned apps, not an audio-processing quality issue.
+
+## Acknowledgements
+Huge thanks to the open-source stem separation model community powering this project.
+
+- [Demucs](https://github.com/facebookresearch/demucs) and related model variants used for source separation
+- [demucs-mlx](https://github.com/sevagh/demucs-mlx) for Apple Silicon optimized Demucs inference support
+
 ## Open in VS Code
 Open this repo root in VS Code.

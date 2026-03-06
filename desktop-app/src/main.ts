@@ -1,7 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { readFile } from "@tauri-apps/plugin-fs";
-import { openPath } from "@tauri-apps/plugin-opener";
 
 type Preset = "fast" | "best" | "vocal_boost";
 type QualityMode = "fast" | "balanced" | "high";
@@ -52,6 +50,14 @@ const ENGINE_KEY = "audiolab.engineDir";
 const OUTPUT_KEY = "audiolab.outputDir";
 const STEMS_KEY = "audiolab.stemsDir";
 const STEM_CANDIDATES = ["vocals", "drums", "bass", "other", "instrumental"];
+const STEM_FILE_ALIASES: Record<string, string[]> = {
+  vocals: ["vocals"],
+  drums: ["drums"],
+  bass: ["bass"],
+  other: ["other"],
+  instrumental: ["instrumental", "no_vocals", "accompaniment"],
+};
+const STEM_EXTENSIONS = ["wav", "flac", "mp3", "m4a", "ogg"];
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -258,11 +264,20 @@ async function ensureEngine(): Promise<void> {
 
   const engineDir = engineDirEl.value.trim();
   setEngineStatus("starting...");
-  const result = await invoke<string>("start_engine", {
-    engineDir: engineDir || null,
-    port: 8732,
-  });
-  log(result);
+  try {
+    const result = await invoke<string>("start_engine", {
+      engineDir: engineDir || null,
+      port: 8732,
+    });
+    log(result);
+  } catch (err) {
+    // If an existing engine is already serving requests, keep UI state as running.
+    if (await healthCheck()) {
+      setEngineStatus("running");
+      return;
+    }
+    throw err;
+  }
 
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
@@ -617,30 +632,36 @@ async function loadStemsFromDir(stemsDir: string): Promise<void> {
     row.gain = null;
     row.root.classList.add("disabled");
     row.status.textContent = "loading...";
+    const stemNames = STEM_FILE_ALIASES[row.name] ?? [row.name];
     for (const baseDir of candidateDirs) {
-      const filePath = joinPath(baseDir, `${row.name}.wav`);
-      try {
-        const ctx = ensureAudioContext();
-        const t0 = performance.now();
-        const bytes = await readFile(filePath);
-        const t1 = performance.now();
-        const arr = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        row.buffer = await ctx.decodeAudioData(arr);
-        const t2 = performance.now();
-        row.available = true;
-        chosenDir = chosenDir ?? baseDir;
-        row.root.classList.remove("disabled");
-        const readMs = Math.round(t1 - t0);
-        const decodeMs = Math.round(t2 - t1);
-        const totalMs = readMs + decodeMs;
-        row.status.textContent = `ready (${row.buffer.duration.toFixed(1)}s, ${totalMs}ms)`;
-        log(
-          `Stem loaded: ${row.name} | read ${readMs}ms | decode ${decodeMs}ms | total ${totalMs}ms`
-        );
-        updateStemGain(row);
-        return true;
-      } catch {
-        // try next candidate folder
+      for (const stemName of stemNames) {
+        for (const ext of STEM_EXTENSIONS) {
+          const filePath = joinPath(baseDir, `${stemName}.${ext}`);
+          try {
+            const ctx = ensureAudioContext();
+            const t0 = performance.now();
+            const raw = await invoke<number[]>("read_binary_file", { path: filePath });
+            const bytes = Uint8Array.from(raw);
+            const t1 = performance.now();
+            const arr = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+            row.buffer = await ctx.decodeAudioData(arr);
+            const t2 = performance.now();
+            row.available = true;
+            chosenDir = chosenDir ?? baseDir;
+            row.root.classList.remove("disabled");
+            const readMs = Math.round(t1 - t0);
+            const decodeMs = Math.round(t2 - t1);
+            const totalMs = readMs + decodeMs;
+            row.status.textContent = `ready (${row.buffer.duration.toFixed(1)}s, ${totalMs}ms)`;
+            log(
+              `Stem loaded: ${row.name} (${stemName}.${ext}) | read ${readMs}ms | decode ${decodeMs}ms | total ${totalMs}ms`
+            );
+            updateStemGain(row);
+            return true;
+          } catch {
+            // try next file candidate
+          }
+        }
       }
     }
     row.status.textContent = "missing";
@@ -873,21 +894,27 @@ window.addEventListener("DOMContentLoaded", () => {
     try {
       await ensureEngine();
       log("Engine is ready.");
-      await runSelfCheck();
     } catch (err) {
       log(`Failed to start engine: ${String(err)}`);
       setEngineStatus("error");
       setSelfCheckStatus(`error | ${String(err)}`);
+      return;
+    }
+
+    try {
+      await runSelfCheck();
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      setSelfCheckStatus(`error | ${text}`);
+      log(`Self-check failed: ${text}`);
+
+      if (await healthCheck()) {
+        setEngineStatus("running");
+      }
     }
   });
   stopEngineBtn.addEventListener("click", () => {
     stopEngine().catch((err) => log(String(err)));
-  });
-  $("open-output").addEventListener("click", () => {
-    const out = outputDirEl.value.trim();
-    if (out) {
-      openPath(out).catch((err) => log(String(err)));
-    }
   });
   $("refresh-models").addEventListener("click", () => {
     refreshModels().catch((err) => {
