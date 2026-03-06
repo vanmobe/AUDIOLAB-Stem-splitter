@@ -81,6 +81,33 @@ jobs:
         run: npm run tauri build
         working-directory: desktop-app
 
+      - name: Ensure macOS app archive exists
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          APP_ARCHIVES=(desktop-app/src-tauri/target/release/bundle/macos/*.app.tar.gz)
+          if [ ${#APP_ARCHIVES[@]} -gt 0 ]; then
+            echo "macOS app archive already exists."
+            ls -1 "${APP_ARCHIVES[@]}"
+            exit 0
+          fi
+
+          APPS=(desktop-app/src-tauri/target/release/bundle/macos/*.app)
+          if [ ${#APPS[@]} -eq 0 ]; then
+            echo "No .app bundle found to archive."
+            exit 1
+          fi
+
+          APP_PATH="${APPS[0]}"
+          APP_DIR="$(dirname "$APP_PATH")"
+          APP_NAME="$(basename "$APP_PATH")"
+          OUT_NAME="${APP_NAME}.tar.gz"
+          echo "Creating ${OUT_NAME} from ${APP_NAME}"
+          (cd "$APP_DIR" && tar -czf "$OUT_NAME" "$APP_NAME")
+          ls -1 "$APP_DIR"/*.app.tar.gz
+
       - name: Verify macOS installers
         if: runner.os == 'macOS'
         shell: bash
