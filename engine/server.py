@@ -9,7 +9,11 @@ import shutil
 import sys
 
 from jobs import STORE, run_job, external_demucs_running, external_demucs_processes
-from demucs_runner import demucs_list_models_cmd, resolve_demucs_backend
+from demucs_runner import (
+    demucs_list_models_cmd,
+    fallback_models_for_backend,
+    resolve_demucs_backend,
+)
 
 app = FastAPI(title="Moises Local Engine", version="0.2.0")
 
@@ -97,21 +101,28 @@ def models():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No Demucs backend available: {e}")
 
+    fallback = fallback_models_for_backend(backend_name)
+    if not cmd:
+        return ModelsResponse(models=fallback)
+
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20, check=False)
     except Exception as e:
+        if fallback:
+            return ModelsResponse(models=fallback)
         raise HTTPException(status_code=500, detail=f"Failed to list models: {e}")
 
     if proc.returncode != 0:
         detail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        if fallback:
+            return ModelsResponse(models=fallback)
         raise HTTPException(status_code=500, detail=f"Model listing failed: {detail[-500:]}")
 
     parsed = _parse_models_output((proc.stdout or "").splitlines())
     if not parsed:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Model listing returned no models from backend {backend_name}.",
-        )
+        if fallback:
+            return ModelsResponse(models=fallback)
+        raise HTTPException(status_code=500, detail=f"Model listing returned no models from backend {backend_name}.")
     return ModelsResponse(models=parsed)
 
 @app.get("/self-check", response_model=SelfCheckResponse)
@@ -208,6 +219,16 @@ def self_check():
                     key="models",
                     status="fail",
                     message=f"Model listing error: {e}",
+                )
+            )
+    elif backend_name:
+        models = fallback_models_for_backend(backend_name)
+        if models:
+            checks.append(
+                CheckItem(
+                    key="models",
+                    status="warn",
+                    message=f"Using fallback model list for backend {backend_name}.",
                 )
             )
 

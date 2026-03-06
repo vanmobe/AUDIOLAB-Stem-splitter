@@ -66,6 +66,8 @@ jobs:
           python -m venv desktop-app/resources/engine_bundle/.venv
           desktop-app/resources/engine_bundle/.venv/Scripts/python.exe -m pip install --upgrade pip
           desktop-app/resources/engine_bundle/.venv/Scripts/python.exe -m pip install -r desktop-app/resources/engine_bundle/requirements.txt
+          $pyBase = (python -c "import sys; print(sys.base_prefix)").Trim()
+          Copy-Item -Recurse -Force $pyBase desktop-app/resources/engine_bundle/.python_runtime
           Set-Content -Path desktop-app/resources/engine_bundle/.venv/.splitlab_runtime_ready -Value "ok"
 
       - name: Verify bundled engine payload

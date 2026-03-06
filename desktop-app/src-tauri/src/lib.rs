@@ -203,6 +203,14 @@ fn resolve_python(engine_dir: &Path) -> Option<PythonLaunch> {
             pre_args: vec![],
         },
         PythonLaunch {
+            program: engine_dir
+                .join(".python_runtime")
+                .join("python.exe")
+                .to_string_lossy()
+                .to_string(),
+            pre_args: vec![],
+        },
+        PythonLaunch {
             program: "/opt/homebrew/bin/python3.13".to_string(),
             pre_args: vec![],
         },
@@ -279,10 +287,81 @@ fn run_logged_python_command(
     Ok(())
 }
 
+fn python_launch_works(launch: &PythonLaunch) -> bool {
+    Command::new(&launch.program)
+        .args(&launch.pre_args)
+        .arg("-c")
+        .arg("import sys")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn repair_windows_venv_cfg(engine_dir: &Path) -> Result<bool, String> {
+    let cfg_path = engine_dir.join(".venv").join("pyvenv.cfg");
+    let runtime_python = engine_dir.join(".python_runtime").join("python.exe");
+    if !cfg_path.exists() || !runtime_python.exists() {
+        return Ok(false);
+    }
+
+    let runtime_home = runtime_python
+        .parent()
+        .ok_or_else(|| "Bundled Python runtime path is invalid".to_string())?;
+    let content = fs::read_to_string(&cfg_path)
+        .map_err(|e| format!("Failed to read {}: {e}", cfg_path.display()))?;
+
+    let mut out: Vec<String> = Vec::new();
+    let mut touched = false;
+    for raw in content.lines() {
+        let trimmed = raw.trim_start().to_ascii_lowercase();
+        if trimmed.starts_with("home =") {
+            out.push(format!("home = {}", runtime_home.display()));
+            touched = true;
+        } else if trimmed.starts_with("executable =") {
+            out.push(format!("executable = {}", runtime_python.display()));
+            touched = true;
+        } else if trimmed.starts_with("command =") {
+            out.push(format!("command = {} -m venv .venv", runtime_python.display()));
+            touched = true;
+        } else {
+            out.push(raw.to_string());
+        }
+    }
+
+    if touched {
+        fs::write(&cfg_path, out.join("\n") + "\n")
+            .map_err(|e| format!("Failed to write {}: {e}", cfg_path.display()))?;
+    }
+    Ok(touched)
+}
+
+#[cfg(not(windows))]
+fn repair_windows_venv_cfg(_engine_dir: &Path) -> Result<bool, String> {
+    Ok(false)
+}
+
 fn ensure_engine_runtime(engine_dir: &Path, log_path: &Path) -> Result<PythonLaunch, String> {
     let venv_python = venv_python_path(engine_dir);
     let mut created_venv = false;
-    if !venv_python.exists() {
+    let mut needs_bootstrap = !venv_python.exists();
+
+    let venv_launch = PythonLaunch {
+        program: venv_python.to_string_lossy().to_string(),
+        pre_args: vec![],
+    };
+
+    if !needs_bootstrap && !python_launch_works(&venv_launch) {
+        let _ = repair_windows_venv_cfg(engine_dir);
+        if !python_launch_works(&venv_launch) {
+            let _ = fs::remove_dir_all(engine_dir.join(".venv"));
+            needs_bootstrap = true;
+        }
+    }
+
+    if needs_bootstrap {
         let bootstrap = resolve_python(engine_dir).ok_or_else(|| {
             "Bundled Python runtime is missing and no system Python was found. Reinstall SplitLAB or use Advanced engine override.".to_string()
         })?;
@@ -290,10 +369,12 @@ fn ensure_engine_runtime(engine_dir: &Path, log_path: &Path) -> Result<PythonLau
         created_venv = true;
     }
 
-    let venv_launch = PythonLaunch {
-        program: venv_python.to_string_lossy().to_string(),
-        pre_args: vec![],
-    };
+    if !python_launch_works(&venv_launch) {
+        return Err(format!(
+            "Python runtime is not usable at {}. Reinstall SplitLAB.",
+            venv_python.display()
+        ));
+    }
 
     let marker = engine_dir.join(".venv").join(".splitlab_runtime_ready");
     if !marker.exists() {

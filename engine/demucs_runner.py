@@ -12,6 +12,12 @@ from io_audio import read_audio, write_audio, peak_limit
 
 TARGET_SR = 44100
 STEM_NAMES_4 = ["vocals", "drums", "bass", "other"]
+FALLBACK_MODELS = [
+    "htdemucs",
+    "htdemucs_ft",
+    "mdx",
+    "mdx_extra",
+]
 
 
 def _resample_linear(audio: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
@@ -74,8 +80,18 @@ def resolve_demucs_backend() -> tuple[str, list[str], str]:
 
 
 def demucs_list_models_cmd() -> list[str]:
-    _, base_cmd, _ = resolve_demucs_backend()
-    return base_cmd + ["--list-models"]
+    backend_name, base_cmd, _ = resolve_demucs_backend()
+    if backend_name == "demucs":
+        return base_cmd + ["--list-models"]
+    # demucs-mlx variants are not consistent in list-models support.
+    # Let callers use fallback model hints when listing is unavailable.
+    return []
+
+
+def fallback_models_for_backend(backend_name: str | None) -> list[str]:
+    if backend_name in {"demucs", "demucs-mlx"}:
+        return FALLBACK_MODELS.copy()
+    return []
 
 
 def _quality_params(quality_mode: str) -> tuple[float, int, int]:
