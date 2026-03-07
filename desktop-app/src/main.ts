@@ -256,6 +256,22 @@ async function checkEngine(): Promise<void> {
   }
 }
 
+async function reportEngineLocationHint(): Promise<void> {
+  try {
+    const engineDir = engineDirEl.value.trim();
+    const hint = await invoke<string>("engine_location_hint", {
+      engineDir: engineDir || null,
+    });
+    for (const line of hint.split("\n")) {
+      const text = line.trim();
+      if (text) log(text);
+    }
+  } catch (err) {
+    const text = err instanceof Error ? err.message : String(err);
+    log(`Engine location hint unavailable: ${text}`);
+  }
+}
+
 async function ensureEngine(): Promise<void> {
   if (await healthCheck()) {
     setEngineStatus("running");
@@ -911,6 +927,7 @@ window.addEventListener("DOMContentLoaded", () => {
   loadEngineDir();
   loadOutputDir();
   loadStemsDir();
+  reportEngineLocationHint().catch((err) => log(String(err)));
   checkEngine().catch((err) => log(String(err)));
 
   $("pick-engine-dir").addEventListener("click", () => {

@@ -70,9 +70,9 @@ def resolve_demucs_backend() -> tuple[str, list[str], str]:
 
     demucs_cmd = shutil.which("demucs")
     if demucs_cmd:
-        return ("demucs", [demucs_cmd], "--name")
+        return ("demucs", [demucs_cmd], "-n")
     if _module_exists("demucs.separate"):
-        return ("demucs", [sys.executable, "-m", "demucs.separate"], "--name")
+        return ("demucs", [sys.executable, "-m", "demucs.separate"], "-n")
 
     raise RuntimeError(
         "No Demucs backend found. Install demucs-mlx (macOS/Apple Silicon) "

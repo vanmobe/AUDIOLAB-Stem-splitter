@@ -6,3 +6,4 @@ soundfile==0.13.1
 psutil==7.1.3
 demucs-mlx[convert]==1.4.0; platform_system == "Darwin"
 demucs==4.0.1; platform_system != "Darwin"
+torchcodec; platform_system != "Darwin"

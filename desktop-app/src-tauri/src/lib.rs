@@ -21,7 +21,78 @@ fn resolve_engine_dir(input: &Path) -> Option<PathBuf> {
     if nested.join("server.py").exists() {
         return Some(nested);
     }
+    let bundle = input.join("engine_bundle");
+    if bundle.join("server.py").exists() {
+        return Some(bundle);
+    }
     None
+}
+
+fn find_engine_dir(root: &Path) -> Option<PathBuf> {
+    if let Some(found) = resolve_engine_dir(root) {
+        return Some(found);
+    }
+    if !root.exists() || !root.is_dir() {
+        return None;
+    }
+
+    // Installer layouts can vary between platforms and toolchain versions.
+    // Recursively search a few levels for a folder that contains server.py.
+    let max_depth = 4usize;
+    let mut q: VecDeque<(PathBuf, usize)> = VecDeque::new();
+    q.push_back((root.to_path_buf(), 0));
+
+    while let Some((dir, depth)) = q.pop_front() {
+        if let Some(found) = resolve_engine_dir(&dir) {
+            return Some(found);
+        }
+        if depth >= max_depth {
+            continue;
+        }
+        let rd = match fs::read_dir(&dir) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                q.push_back((p, depth + 1));
+            }
+        }
+    }
+
+    None
+}
+
+#[tauri::command]
+fn engine_location_hint(engine_dir: Option<String>) -> Result<String, String> {
+    let mut search_roots: Vec<PathBuf> = Vec::new();
+    if let Some(raw) = engine_dir {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            search_roots.push(PathBuf::from(trimmed));
+        }
+    }
+    search_roots.extend(default_engine_search_roots());
+
+    let resolved = search_roots.iter().find_map(|root| find_engine_dir(root));
+    let managed = splitlab_data_root().join("engine-managed").join("engine");
+    let log_path = env::temp_dir().join("audiolab-splitter-engine.log");
+
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(src) = resolved {
+        if should_materialize_engine(&src) {
+            lines.push(format!("Bundled engine source: {}", src.display()));
+            lines.push(format!("Managed engine location: {}", managed.display()));
+        } else {
+            lines.push(format!("Engine location: {}", src.display()));
+        }
+    } else {
+        lines.push("Engine location: not detected yet (will resolve when engine starts).".to_string());
+        lines.push(format!("Expected managed engine location: {}", managed.display()));
+    }
+    lines.push(format!("Engine log file: {}", log_path.display()));
+    Ok(lines.join("\n"))
 }
 
 fn default_engine_search_roots() -> Vec<PathBuf> {
@@ -182,8 +253,34 @@ fn command_available(program: &str) -> bool {
     false
 }
 
+#[cfg(windows)]
+fn find_bundled_runtime_python(engine_dir: &Path) -> Option<PathBuf> {
+    let root = engine_dir.join(".python_runtime");
+    let direct = root.join("python.exe");
+    if direct.exists() {
+        return Some(direct);
+    }
+    let rd = fs::read_dir(&root).ok()?;
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let nested = p.join("python.exe");
+        if nested.exists() {
+            return Some(nested);
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn find_bundled_runtime_python(_engine_dir: &Path) -> Option<PathBuf> {
+    None
+}
+
 fn resolve_python(engine_dir: &Path) -> Option<PythonLaunch> {
-    let candidates = vec![
+    let mut candidates = vec![
         PythonLaunch {
             program: engine_dir
                 .join(".venv")
@@ -198,14 +295,6 @@ fn resolve_python(engine_dir: &Path) -> Option<PythonLaunch> {
                 .join(".venv")
                 .join("bin")
                 .join("python")
-                .to_string_lossy()
-                .to_string(),
-            pre_args: vec![],
-        },
-        PythonLaunch {
-            program: engine_dir
-                .join(".python_runtime")
-                .join("python.exe")
                 .to_string_lossy()
                 .to_string(),
             pre_args: vec![],
@@ -235,6 +324,15 @@ fn resolve_python(engine_dir: &Path) -> Option<PythonLaunch> {
             pre_args: vec![],
         },
     ];
+    if let Some(p) = find_bundled_runtime_python(engine_dir) {
+        candidates.insert(
+            2,
+            PythonLaunch {
+                program: p.to_string_lossy().to_string(),
+                pre_args: vec![],
+            },
+        );
+    }
 
     candidates
         .into_iter()
@@ -299,10 +397,26 @@ fn python_launch_works(launch: &PythonLaunch) -> bool {
         .unwrap_or(false)
 }
 
+fn python_module_available(launch: &PythonLaunch, module: &str) -> bool {
+    let check = format!("import importlib.util,sys; sys.exit(0 if importlib.util.find_spec({module:?}) else 1)");
+    Command::new(&launch.program)
+        .args(&launch.pre_args)
+        .arg("-c")
+        .arg(check)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 #[cfg(windows)]
 fn repair_windows_venv_cfg(engine_dir: &Path) -> Result<bool, String> {
     let cfg_path = engine_dir.join(".venv").join("pyvenv.cfg");
-    let runtime_python = engine_dir.join(".python_runtime").join("python.exe");
+    let runtime_python = match find_bundled_runtime_python(engine_dir) {
+        Some(p) => p,
+        None => return Ok(false),
+    };
     if !cfg_path.exists() || !runtime_python.exists() {
         return Ok(false);
     }
@@ -396,6 +510,24 @@ fn ensure_engine_runtime(engine_dir: &Path, log_path: &Path) -> Result<PythonLau
             .map_err(|e| format!("Failed to write runtime marker {}: {e}", marker.display()))?;
     }
 
+    #[cfg(windows)]
+    {
+        if !python_module_available(&venv_launch, "torchcodec") {
+            run_logged_python_command(
+                engine_dir,
+                log_path,
+                &venv_launch,
+                &["-m", "pip", "install", "torchcodec"],
+            )?;
+            if !python_module_available(&venv_launch, "torchcodec") {
+                return Err(
+                    "Missing required dependency 'torchcodec' for Windows demucs runtime. Check engine log for pip output."
+                        .to_string(),
+                );
+            }
+        }
+    }
+
     Ok(venv_launch)
 }
 
@@ -447,7 +579,7 @@ fn start_engine(engine_dir: Option<String>, port: Option<u16>) -> Result<String,
 
     let mut dir: Option<PathBuf> = None;
     for root in &search_roots {
-        if let Some(found) = resolve_engine_dir(root) {
+        if let Some(found) = find_engine_dir(root) {
             dir = Some(found);
             break;
         }
@@ -615,7 +747,8 @@ pub fn run() {
             start_engine,
             stop_engine,
             find_stems_dir,
-            read_binary_file
+            read_binary_file,
+            engine_location_hint
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

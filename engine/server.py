@@ -7,6 +7,7 @@ import threading
 import subprocess
 import shutil
 import sys
+import importlib.util
 
 from jobs import STORE, run_job, external_demucs_running, external_demucs_processes
 from demucs_runner import (
@@ -95,6 +96,9 @@ def _parse_models_output(lines: list[str]) -> list[str]:
             parsed.append(token)
     return parsed
 
+def _module_exists(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
 @app.get("/models", response_model=ModelsResponse)
 def models():
     try:
@@ -165,6 +169,24 @@ def self_check():
             )
         )
 
+    if backend_name == "demucs":
+        if _module_exists("torchcodec"):
+            checks.append(
+                CheckItem(
+                    key="torchcodec",
+                    status="pass",
+                    message="torchcodec is available.",
+                )
+            )
+        else:
+            checks.append(
+                CheckItem(
+                    key="torchcodec",
+                    status="fail",
+                    message="torchcodec is missing. Install dependencies again before running splits on Windows/Linux.",
+                )
+            )
+
     if ffmpeg_path:
         checks.append(
             CheckItem(
@@ -214,21 +236,47 @@ def self_check():
                     )
             else:
                 detail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+                models = filter_compatible_models(
+                    fallback_models_for_backend(backend_name),
+                    backend_name,
+                )
+                if models:
+                    checks.append(
+                        CheckItem(
+                            key="models",
+                            status="warn",
+                            message="Model listing command is unsupported on this backend build; using fallback model list.",
+                        )
+                    )
+                else:
+                    checks.append(
+                        CheckItem(
+                            key="models",
+                            status="fail",
+                            message=f"Model listing failed: {detail[-300:]}",
+                        )
+                    )
+        except Exception as e:
+            models = filter_compatible_models(
+                fallback_models_for_backend(backend_name),
+                backend_name,
+            )
+            if models:
+                checks.append(
+                    CheckItem(
+                        key="models",
+                        status="warn",
+                        message="Model listing command is unavailable on this backend build; using fallback model list.",
+                    )
+                )
+            else:
                 checks.append(
                     CheckItem(
                         key="models",
                         status="fail",
-                        message=f"Model listing failed: {detail[-300:]}",
+                        message=f"Model listing error: {e}",
                     )
                 )
-        except Exception as e:
-            checks.append(
-                CheckItem(
-                    key="models",
-                    status="fail",
-                    message=f"Model listing error: {e}",
-                )
-            )
     elif backend_name:
         models = filter_compatible_models(fallback_models_for_backend(backend_name), backend_name)
         if models:
