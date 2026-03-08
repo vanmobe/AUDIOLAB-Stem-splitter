@@ -47,7 +47,12 @@ jobs:
         run: |
           set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          APP_VERSION="${TAG_VERSION%%-*}"
+          RAW_APP_VERSION="${TAG_VERSION%%-*}"
+          IFS='.' read -r V1 V2 V3 _ <<< "${RAW_APP_VERSION}"
+          V1="${V1:-0}"
+          V2="${V2:-0}"
+          V3="${V3:-0}"
+          APP_VERSION="${V1}.${V2}.${V3}"
           export APP_VERSION
           echo "Using tag version: ${TAG_VERSION}"
           echo "Using app bundle version: ${APP_VERSION}"
